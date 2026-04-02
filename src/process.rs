@@ -36,32 +36,41 @@ use std::path::Path;
 ///
 /// # Example
 ///
-/// ```rust
+/// ```rust,no_run
 /// use std::path::Path;
-/// use your_crate::process_pdf;
+/// use remove_outside_objects_pdf::process_pdf;
 ///
 /// let input = Path::new("input.pdf");
 /// let output = Path::new("output.pdf");
-/// process_pdf(input, output)?;
+/// process_pdf(input, output).unwrap();
 /// ```
 pub fn process_pdf(input_path: &Path, output_path: &Path) -> lopdf::Result<()> {
     let mut document = lopdf::Document::load(input_path)?;
     let pages: Vec<lopdf::ObjectId> = document.get_pages().into_iter().map(|(_, id)| id).collect();
 
     for page_id in &pages {
-        let trim = get_trim_box(&document, *page_id);
+        let trim = match get_trim_box(&document, *page_id) {
+            Some(r) => r,
+            None => continue,
+        };
 
         let content = document.get_and_decode_page_content(*page_id)?;
-        let filtered_operations = filter_operations(&content.operations, &trim);
+        let filtered_operations = filter_operations(&content.operations, Option::from(trim));
 
         let content_to_encode = Content {
             operations: &filtered_operations[..],
         };
         let encoded = content_to_encode.encode();
 
-        let stream_id = document.get_page_contents(*page_id)[0];
-        let stream = document.get_object_mut(stream_id)?.as_stream_mut();
-        stream?.set_plain_content(encoded?);
+        let stream_ids = document.get_page_contents(*page_id);
+        let first_stream = document.get_object_mut(stream_ids[0])?.as_stream_mut();
+        first_stream?.set_plain_content(encoded?);
+
+        for &extra_id in &stream_ids[1..] {
+            if let Ok(stream) = document.get_object_mut(extra_id)?.as_stream_mut() {
+                stream.set_plain_content(vec![]);
+            }
+        }
 
         let referenced = collect_referenced_resources(&filtered_operations);
         prune_page_resources(&mut document, *page_id, &referenced)?;
@@ -168,9 +177,18 @@ fn prune_page_resources(
     Ok(())
 }
 
-fn get_trim_box(doc: &lopdf::Document, page_id: lopdf::ObjectId) -> Rect {
-    let page = doc.get_dictionary(page_id).unwrap();
-    let trim_box = page.get(b"TrimBox").unwrap().as_array().unwrap();
-    let values: Vec<f64> = trim_box.iter().map(object_to_f64).collect();
-    Rect::from_corners(values[0], values[1], values[2], values[3])
+fn get_trim_box(doc: &lopdf::Document, page_id: lopdf::ObjectId) -> Option<Rect> {
+    let page = doc.get_dictionary(page_id).ok()?;
+    let box_obj = page
+        .get(b"TrimBox")
+        .or_else(|_| page.get(b"MediaBox"))
+        .ok()?;
+    let arr = box_obj.as_array().ok()?;
+    if arr.len() < 4 {
+        return None;
+    }
+    let values: Vec<f64> = arr.iter().map(object_to_f64).collect();
+    Some(Rect::from_corners(
+        values[0], values[1], values[2], values[3],
+    ))
 }

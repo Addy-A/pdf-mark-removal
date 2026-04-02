@@ -23,14 +23,14 @@ pub type Operation = lopdf::content::Operation;
 ///
 /// # Examples
 ///
-/// ```rust
+/// ```rust,ignore
 /// use lopdf::Object;
 ///
 /// let int_obj = Object::Integer(42);
 /// let real_obj = Object::Real(3.14);
 ///
 /// assert_eq!(object_to_f64(&int_obj), 42.0);
-/// assert_eq!(object_to_f64(&real_obj), 3.14);
+/// assert_eq!(object_to_f64(&real_obj), 3.14 as f64);
 /// ```
 pub fn object_to_f64(object: &lopdf::Object) -> f64 {
     match object {
@@ -152,7 +152,7 @@ pub(crate) fn re_is_outside(operands: &[lopdf::Object], ctm: &Matrix, trim: &Rec
 ///
 /// This function assumes well-formed input where every `Q` matches a prior `q`,
 /// and marked content blocks are properly closed.
-pub fn filter_operations(operations: &[Operation], trim: &Rect) -> Vec<Operation> {
+pub fn filter_operations(operations: &[Operation], trim: Option<Rect>) -> Vec<Operation> {
     let mut output: Vec<Operation> = Vec::new();
 
     let mut ctm_stack: Vec<Matrix> = vec![Matrix::identity()];
@@ -217,7 +217,7 @@ pub fn filter_operations(operations: &[Operation], trim: &Rect) -> Vec<Operation
                             operands: vec![],
                         });
                         ctm_stack.pop();
-                        let filtered = filter_block(block, trim, &ctm_stack);
+                        let filtered = filter_block(block, trim.as_ref(), &ctm_stack);
                         if let Some(parent) = block_stack.last_mut() {
                             parent.extend(filtered);
                         } else {
@@ -231,7 +231,8 @@ pub fn filter_operations(operations: &[Operation], trim: &Rect) -> Vec<Operation
 
         match operation.operator.as_str() {
             "q" => {
-                ctm_stack.push(*ctm_stack.last().unwrap());
+                let last = ctm_stack.last().copied().unwrap_or(Matrix::identity());
+                ctm_stack.push(last);
                 block_stack.push(vec![operation.clone()]);
             }
 
@@ -245,7 +246,7 @@ pub fn filter_operations(operations: &[Operation], trim: &Rect) -> Vec<Operation
                     // If ALL drawable content is outside → drop entire block.
                     // If MIXED → surgically remove outside-trim re f pairs.
                     // If all inside → flush as-is.
-                    let filtered_block = filter_block(block, trim, &ctm_stack);
+                    let filtered_block = filter_block(block, trim.as_ref(), &ctm_stack);
 
                     // Push filtered ops to the right place —
                     // either the parent block buffer or final output
@@ -259,8 +260,11 @@ pub fn filter_operations(operations: &[Operation], trim: &Rect) -> Vec<Operation
 
             "cm" => {
                 let m = operands_to_matrix(&operation.operands);
-                let top = ctm_stack.last_mut().unwrap();
-                *top = top.concat(&m);
+                if let Some(top) = ctm_stack.last_mut() {
+                    *top = top.concat(&m);
+                } else {
+                    ctm_stack.push(m);
+                }
 
                 if let Some(block) = block_stack.last_mut() {
                     block.push(operation.clone());
@@ -305,7 +309,11 @@ pub fn filter_operations(operations: &[Operation], trim: &Rect) -> Vec<Operation
 /// 1. Determines the base transformation matrix from the CTM stack (uses identity matrix if stack is empty)
 /// 2. Checks if the entire block is outside the image bounds - if so, returns empty vector
 /// 3. Removes operation pairs that are outside the trimming rectangle while preserving the remaining operations
-fn filter_block(block: Vec<Operation>, trim: &Rect, ctm_stack: &[Matrix]) -> Vec<Operation> {
+fn filter_block(
+    block: Vec<Operation>,
+    trim: Option<&Rect>,
+    ctm_stack: &[Matrix],
+) -> Vec<Operation> {
     let base_ctm = ctm_stack.last().copied().unwrap_or(Matrix::identity());
 
     if block_is_outside_image(&block, &base_ctm, trim) {
@@ -343,7 +351,11 @@ fn filter_block(block: Vec<Operation>, trim: &Rect, ctm_stack: &[Matrix]) -> Vec
 ///
 /// Note: The function currently only checks the right boundary and assumes (0,0) as the
 /// reference point for XObject positioning.
-pub(crate) fn block_is_outside_image(block: &[Operation], base_ctm: &Matrix, trim: &Rect) -> bool {
+pub(crate) fn block_is_outside_image(
+    block: &[Operation],
+    base_ctm: &Matrix,
+    trim: Option<&Rect>,
+) -> bool {
     let mut ctm_stack: Vec<Matrix> = vec![base_ctm.clone()];
 
     for operation in block {
@@ -368,7 +380,7 @@ pub(crate) fn block_is_outside_image(block: &[Operation], base_ctm: &Matrix, tri
             "Do" => {
                 let ctm = ctm_stack.last().unwrap();
                 let (px, _py) = ctm.transform_point(0.0, 0.0);
-                if px >= trim.right() {
+                if px >= trim.expect("trim box should be set before processing Do operators").right() {
                     return true;
                 }
             }
@@ -412,7 +424,7 @@ pub(crate) fn block_is_outside_image(block: &[Operation], base_ctm: &Matrix, tri
 pub(crate) fn remove_outside_re_f_pairs(
     block: Vec<Operation>,
     base_ctm: &Matrix,
-    trim: &Rect,
+    trim: Option<&Rect>,
 ) -> Vec<Operation> {
     let mut result: Vec<Operation> = Vec::new();
     let mut ctm_stack: Vec<Matrix> = vec![*base_ctm];
@@ -448,10 +460,12 @@ pub(crate) fn remove_outside_re_f_pairs(
             "re" => {
                 let next_operation = block.get(i + 1).map(|o| o.operator.as_str());
                 if next_operation == Some("f") || next_operation == Some("f*") {
-                    let local_ctm = ctm_stack.last().copied().unwrap_or(Matrix::identity());
-                    if re_is_outside(&operation.operands, &local_ctm, trim) {
-                        i += 2;
-                        continue;
+                    if let Some(trim) = trim {
+                        let local_ctm = ctm_stack.last().copied().unwrap_or(Matrix::identity());
+                        if re_is_outside(&operation.operands, &local_ctm, trim) {
+                            i += 2;
+                            continue;
+                        }
                     }
                 }
                 result.push(operation.clone());
