@@ -305,7 +305,7 @@ fn filter_drops_everything_after_marked_content_ends() {
         op("f", vec![]),
         op("Q", vec![]),
     ];
-    let filtered = filter_operations(&ops, &trim);
+    let filtered = filter_operations(&ops, Some(trim));
     let operators: Vec<&str> = filtered.iter().map(|o| o.operator.as_str()).collect();
     // Should contain BDC, q, Q, EMC but nothing after EMC
     assert!(operators.contains(&"BDC"));
@@ -333,7 +333,7 @@ fn filter_keeps_inside_re_f_pair() {
         op("EMC", vec![]),
         op("EMC", vec![]),
     ];
-    let filtered = filter_operations(&ops, &trim);
+    let filtered = filter_operations(&ops, Some(trim));
     let operators: Vec<&str> = filtered.iter().map(|o| o.operator.as_str()).collect();
     assert!(operators.contains(&"re"), "inside re should be kept");
     assert!(operators.contains(&"f"), "inside f should be kept");
@@ -354,7 +354,7 @@ fn filter_drops_outside_re_f_pair() {
         op("EMC", vec![]),
         op("EMC", vec![]),
     ];
-    let filtered = filter_operations(&ops, &trim);
+    let filtered = filter_operations(&ops, Some(trim));
     let operators: Vec<&str> = filtered.iter().map(|o| o.operator.as_str()).collect();
     assert_eq!(
         operators.iter().filter(|&&o| o == "re").count(),
@@ -393,7 +393,7 @@ fn filter_drops_outside_image_block() {
         op("EMC", vec![]),
         op("EMC", vec![]),
     ];
-    let filtered = filter_operations(&ops, &trim);
+    let filtered = filter_operations(&ops, Some(trim));
     let operators: Vec<&str> = filtered.iter().map(|o| o.operator.as_str()).collect();
     assert!(
         !operators.contains(&"Do"),
@@ -426,7 +426,7 @@ fn filter_keeps_inside_image_block() {
         op("EMC", vec![]),
         op("EMC", vec![]),
     ];
-    let filtered = filter_operations(&ops, &trim);
+    let filtered = filter_operations(&ops, Some(trim));
     let operators: Vec<&str> = filtered.iter().map(|o| o.operator.as_str()).collect();
     assert!(operators.contains(&"Do"), "inside image Do should be kept");
     println!("Inside image block kept: {:?}", operators);
@@ -450,7 +450,7 @@ fn filter_mixed_block_keeps_inside_drops_outside() {
         op("EMC", vec![]),
         op("EMC", vec![]),
     ];
-    let filtered = filter_operations(&ops, &trim);
+    let filtered = filter_operations(&ops, Some(trim));
     let operators: Vec<&str> = filtered.iter().map(|o| o.operator.as_str()).collect();
     // Exactly 1 re and 1 f should remain (the inside pair)
     assert_eq!(
@@ -498,7 +498,7 @@ fn filter_nested_q_blocks_handled() {
         op("EMC", vec![]),
         op("EMC", vec![]),
     ];
-    let filtered = filter_operations(&ops, &trim);
+    let filtered = filter_operations(&ops, Some(trim));
     let operators: Vec<&str> = filtered.iter().map(|o| o.operator.as_str()).collect();
     // Inside rect should survive
     assert!(
@@ -516,7 +516,7 @@ fn filter_nested_q_blocks_handled() {
 #[test]
 fn filter_empty_input_returns_empty() {
     let trim = Rect::from_corners(30.0, 30.0, 642.0, 822.0);
-    let filtered = filter_operations(&[], &trim);
+    let filtered = filter_operations(&[], Some(trim));
     assert!(filtered.is_empty());
 }
 
@@ -530,7 +530,7 @@ fn filter_no_marked_content_keeps_all_inside() {
         op("f", vec![]),
         op("Q", vec![]),
     ];
-    let filtered = filter_operations(&ops, &trim);
+    let filtered = filter_operations(&ops, Some(trim));
     let operators: Vec<&str> = filtered.iter().map(|o| o.operator.as_str()).collect();
     assert_eq!(operators, vec!["q", "re", "f", "Q"]);
 }
@@ -557,7 +557,7 @@ fn block_is_outside_image_detects_outside() {
         op("Do", vec![name("X1")]),
         op("Q", vec![]),
     ];
-    assert!(block_is_outside_image(&block, &base_ctm, &trim));
+    assert!(block_is_outside_image(&block, &base_ctm, Some(&trim)));
 }
 
 #[test]
@@ -580,7 +580,7 @@ fn block_is_outside_image_keeps_inside() {
         op("Do", vec![name("X1")]),
         op("Q", vec![]),
     ];
-    assert!(!block_is_outside_image(&block, &base_ctm, &trim));
+    assert!(!block_is_outside_image(&block, &base_ctm, Some(&trim)));
 }
 
 #[test]
@@ -594,7 +594,7 @@ fn block_is_outside_image_no_do_returns_false() {
         op("f", vec![]),
         op("Q", vec![]),
     ];
-    assert!(!block_is_outside_image(&block, &base_ctm, &trim));
+    assert!(!block_is_outside_image(&block, &base_ctm, Some(&trim)));
 }
 
 // -- Step 4 remove_outside_re_f_pairs unit tests -----------------------
@@ -609,7 +609,7 @@ fn remove_outside_re_f_keeps_inside_pair() {
         op("f", vec![]),
         op("Q", vec![]),
     ];
-    let result = remove_outside_re_f_pairs(block, &base_ctm, &trim);
+    let result = remove_outside_re_f_pairs(block, &base_ctm, Some(&trim));
     let operators: Vec<&str> = result.iter().map(|o| o.operator.as_str()).collect();
     assert_eq!(operators, vec!["q", "re", "f", "Q"]);
 }
@@ -624,7 +624,7 @@ fn remove_outside_re_f_drops_outside_pair() {
         op("f", vec![]),
         op("Q", vec![]),
     ];
-    let result = remove_outside_re_f_pairs(block, &base_ctm, &trim);
+    let result = remove_outside_re_f_pairs(block, &base_ctm, Some(&trim));
     let operators: Vec<&str> = result.iter().map(|o| o.operator.as_str()).collect();
     assert_eq!(operators, vec!["q", "Q"], "outside re+f should be removed");
 }
@@ -641,7 +641,7 @@ fn remove_outside_re_f_keeps_re_not_followed_by_f() {
         op("n", vec![]),
         op("Q", vec![]),
     ];
-    let result = remove_outside_re_f_pairs(block, &base_ctm, &trim);
+    let result = remove_outside_re_f_pairs(block, &base_ctm, Some(&trim));
     let operators: Vec<&str> = result.iter().map(|o| o.operator.as_str()).collect();
     assert!(
         operators.contains(&"re"),
@@ -660,7 +660,7 @@ fn remove_outside_re_f_respects_ctm() {
         op("f", vec![]),
         op("Q", vec![]),
     ];
-    let result = remove_outside_re_f_pairs(block, &base_ctm, &trim);
+    let result = remove_outside_re_f_pairs(block, &base_ctm, Some(&trim));
     let operators: Vec<&str> = result.iter().map(|o| o.operator.as_str()).collect();
     assert_eq!(
         operators,
@@ -679,7 +679,7 @@ fn filter_operations_on_source_pdf_reduces_ops() {
     let trim = Rect::from_corners(30.0, 30.0, 642.0, 822.0);
 
     let before = content.operations.len();
-    let filtered = filter_operations(&content.operations, &trim);
+    let filtered = filter_operations(&content.operations, Some(trim));
     let after = filtered.len();
 
     println!("Before: {} ops, After: {} ops", before, after);
@@ -697,7 +697,7 @@ fn filter_operations_on_source_pdf_keeps_do_operator() {
     let content = doc.get_and_decode_page_content(page_id).unwrap();
     let trim = Rect::from_corners(30.0, 30.0, 642.0, 822.0);
 
-    let filtered = filter_operations(&content.operations, &trim);
+    let filtered = filter_operations(&content.operations, Some(trim));
     let do_count = filtered.iter().filter(|o| o.operator == "Do").count();
     println!("Do operators remaining: {}", do_count);
     assert!(
@@ -714,7 +714,7 @@ fn filter_operations_on_source_pdf_no_ops_after_last_emc() {
     let content = doc.get_and_decode_page_content(page_id).unwrap();
     let trim = Rect::from_corners(30.0, 30.0, 642.0, 822.0);
 
-    let filtered = filter_operations(&content.operations, &trim);
+    let filtered = filter_operations(&content.operations, Some(trim));
     // Find the last EMC
     let last_emc_idx = filtered.iter().rposition(|o| o.operator == "EMC");
 
@@ -742,7 +742,7 @@ fn filter_operations_on_source_pdf_q_Q_balanced() {
     let content = doc.get_and_decode_page_content(page_id).unwrap();
     let trim = Rect::from_corners(30.0, 30.0, 642.0, 822.0);
 
-    let filtered = filter_operations(&content.operations, &trim);
+    let filtered = filter_operations(&content.operations, Some(trim));
     let q_count = filtered.iter().filter(|o| o.operator == "q").count();
     let big_q_count = filtered.iter().filter(|o| o.operator == "Q").count();
     println!("q count: {}, Q count: {}", q_count, big_q_count);
