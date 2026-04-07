@@ -13,8 +13,11 @@ outside the page's **TrimBox** -- while preserving everything inside it.
 
 ## Status
 
-**Alpha.** Tested against 4 production pre-press PDFs; 2 pass correctly end-to-end.
-See [Known Limitations](#known-limitations) for currently identified failure modes.
+**Beta.** Core algorithm validated against production-level pre-press PDFs, including
+previously troublesome InDesign-exported files with heavy tagged-content use. Output
+geometry matches goal files. Remaining work before full release: continued
+battle-testing on diverse production files and completion of the full `test/` fixture
+suite. See [Known Limitations](#known-limitations) for the current known tradeoffs.
 
 ---
 
@@ -89,10 +92,11 @@ The filter processes operations inside buffered `q`/`Q` blocks:
   individually. When a multi-subpath sequence (multiple `re` calls before a
   single `S`) spans both inside and outside the TrimBox, the group is split so
   that only the surviving subpaths share the final `S` operator.
-- **Marked content** (`BDC`/`BMC` ... `EMC`): the artwork lives inside nested
-  marked content sections. Once all marked content closes (depth returns to 0),
-  everything remaining in the stream is unconditionally a print mark and is
-  dropped.
+- **All other operations**: passed through unchanged. `BDC`/`BMC`/`EMC`
+  (marked content) operators are treated as transparent delimiters -- they are
+  buffered and flushed with their enclosing `q`/`Q` block but do not influence
+  geometric filtering decisions. See the note below on why the earlier
+  marked-content-depth heuristic was removed.
 
 ### Boundary rule
 
@@ -163,8 +167,8 @@ Section 9 -- Text):
 | `BT` / `ET`   | none           | Begin / end text block                      | 9.4          |
 | `Tm`          | `a b c d e f`  | Set the text matrix (position)              | 9.4.2        |
 | `TJ` / `Tj`   | array / string | Draw text                                   | 9.4.3        |
-| `BDC` / `BMC` | varies         | Begin marked content                        | 14.6         |
-| `EMC`         | none           | End marked content                          | 14.6         |
+| `BDC` / `BMC` | varies         | Begin marked content (transparent to filtering) | 14.6         |
+| `EMC`         | none           | End marked content (transparent to filtering)   | 14.6         |
 | `gs`          | `/Name`        | Apply a named graphics state from resources | 8.4.5        |
 
 ### CTM (Current Transformation Matrix)
@@ -181,23 +185,43 @@ y' = b*x + d*y + f
 The CTM is managed as a stack: `q` saves the current matrix, `Q` restores
 it, and `cm` concatenates (multiplies) a new transformation onto the top.
 
-### Marked content structure
+### Marked content and InDesign tagged content
 
-The artwork in a typical pre-press PDF lives inside nested `BDC`/`EMC` pairs
-(PDF Reference 1.7, Section 14.6 -- Marked Content). Everything after the
-outermost `EMC` closes is a print mark (registration targets, color bars, slug
-text, etc.):
+Modern InDesign exports wrap virtually all content -- including artwork, images,
+and page geometry -- in `BDC`/`EMC` pairs because InDesign generates tagged PDF
+by default for accessibility and structure purposes. An earlier iteration of this
+filter used a `marked_content_depth` heuristic: once the outermost `EMC` closed
+(depth returning to 0), the remaining operations were assumed to be print marks
+and were unconditionally dropped.
+
+This heuristic was **removed** because it was wrong for modern InDesign files.
+In those files the tagged-content structure permeates the entire stream, so the
+depth-zero boundary does not reliably separate artwork from print marks the way
+it might in older or hand-crafted PDFs. The depth heuristic caused the filter to
+incorrectly discard content inside the TrimBox, producing corrupted output on
+the very production files it was designed to handle.
+
+The current approach is purely **geometric**: every drawing operation is tested
+against the TrimBox regardless of its marked-content nesting level. `BDC`/`BMC`/
+`EMC` operators are preserved as-is and have no influence on filtering decisions.
+This produced clean, validated results across all tested production files.
+
+A pre-press stream typically looks like:
 
 ```
 q
-  BDC               <- marked content depth = 1
-    BDC             <- depth = 2
-      ... artwork ...
-    EMC             <- depth = 1
-  EMC               <- depth = 0 -- everything after this is print marks
-  ... print marks ...
+  BDC               <- tagged content wrapper (InDesign / accessibility)
+    BDC             <- nested tag
+      ... artwork and placed images ...
+    EMC
+  EMC
+  ... print marks (trim targets, colour bars, slug text) ...
 Q
 ```
+
+Under the old heuristic the second `EMC` would trigger unconditional dropping.
+Under the current approach the print marks are dropped only because their
+coordinates fall outside the TrimBox -- which is the correct, robust criterion.
 
 ---
 
@@ -354,6 +378,16 @@ Install: `brew install qpdf poppler` (macOS) or `apt install qpdf poppler-utils`
 ---
 
 ## Known Limitations
+
+### Re-stream size overhead
+
+After filtering, the surviving operations are re-encoded via `Content::encode`
+and written back as a new content stream. This re-encoding does not apply
+compression equivalent to the original stream's filters, so the output file is
+typically **~0.5 MB larger** than a hypothetical lossless edit. The added size
+is an acceptable tradeoff for correctness in the current release. A future
+optimisation pass should investigate writing the re-encoded stream with matching
+compression (e.g. `FlateDecode`) to match or reduce the original size.
 
 ### ColorSpace resources pruned based on page stream only
 
