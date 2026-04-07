@@ -157,13 +157,6 @@ pub fn filter_operations(operations: &[Operation], trim: Option<Rect>) -> Vec<Op
 
     let mut ctm_stack: Vec<Matrix> = vec![Matrix::identity()];
 
-    // EMC depth counter – we count BDC/BMC pushes and EMC pops.
-    // once this hits zero, we've exited all marked content sections – everything after this is print marks.
-    // this then just drop the print marks unconditionally.
-    let mut marked_content_depth: i32 = 0;
-    // becomes true once we've passed the end of marked content.
-    let mut past_marked_content: bool = false;
-
     // Buffer for the current q/Q block being evaluated.
     // None means we are at the top level (no open q block).
     // Each entry is (buffer_of_ops, q_nesting_depth_when_opened).
@@ -171,64 +164,6 @@ pub fn filter_operations(operations: &[Operation], trim: Option<Rect>) -> Vec<Op
     let mut block_stack: Vec<Vec<Operation>> = Vec::new();
 
     for operation in operations {
-        if past_marked_content {
-            match operation.operator.as_str() {
-                "q" => {
-                    let last = ctm_stack.last().cloned().unwrap_or(Matrix::identity());
-                    ctm_stack.push(last);
-                }
-                "Q" => {
-                    if !ctm_stack.is_empty() {
-                        ctm_stack.pop();
-                    }
-                }
-                "cm" => {
-                    let m = operands_to_matrix(&operation.operands);
-                    if let Some(top) = ctm_stack.last_mut() {
-                        *top = top.concat(&m);
-                    } else {
-                        // handling missing graphic state
-                        ctm_stack.push(m);
-                    }
-                }
-                _ => {}
-            }
-            continue;
-        }
-
-        match operation.operator.as_str() {
-            "BDC" | "BMC" => marked_content_depth += 1,
-            "EMC" => {
-                marked_content_depth -= 1;
-                let mut flush_blocks = false;
-
-                if marked_content_depth == 0 {
-                    past_marked_content = true;
-                    flush_blocks = true;
-                    // Flush whatever is buffered, then emit the EMC pair and stop.
-                    // The two EMC operators themselves are structural and should be kept.
-                    // We'll emit them below by falling through to normal handling.
-                }
-
-                if flush_blocks {
-                    while let Some(mut block) = block_stack.pop() {
-                        block.push(Operation {
-                            operator: "Q".to_string(),
-                            operands: vec![],
-                        });
-                        ctm_stack.pop();
-                        let filtered = filter_block(block, trim.as_ref(), &ctm_stack);
-                        if let Some(parent) = block_stack.last_mut() {
-                            parent.extend(filtered);
-                        } else {
-                            output.extend(filtered);
-                        }
-                    }
-                }
-            }
-            _ => {}
-        }
-
         match operation.operator.as_str() {
             "q" => {
                 let last = ctm_stack.last().copied().unwrap_or(Matrix::identity());
