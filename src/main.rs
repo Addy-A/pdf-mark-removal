@@ -23,7 +23,11 @@ fn parse_batch_args(args: &[String]) -> Option<(Vec<PathBuf>, Option<PathBuf>)> 
     let joined = raw_tokens.join(" ");
     let inner = joined.trim_start_matches('[').trim_end_matches(']');
 
-    let inputs: Vec<PathBuf> = inner.split(',').map(|s| PathBuf::from(s.trim())).filter(|p| !p.as_os_str().is_empty()).collect();
+    let inputs: Vec<PathBuf> = inner
+        .split(',')
+        .map(|s| PathBuf::from(s.trim()))
+        .filter(|p| !p.as_os_str().is_empty())
+        .collect();
     if inputs.is_empty() {
         return None;
     }
@@ -35,6 +39,13 @@ fn parse_batch_args(args: &[String]) -> Option<(Vec<PathBuf>, Option<PathBuf>)> 
 
 fn main() {
     let args: Vec<String> = std::env::args().collect();
+
+    if args.contains(&String::from("--version")) {
+        let version = env!("CARGO_PKG_VERSION");
+        println!("{}", version);
+        process::exit(1);
+    }
+
     if let Some((inputs, output_dir)) = parse_batch_args(&args) {
         let mut had_error = false;
 
